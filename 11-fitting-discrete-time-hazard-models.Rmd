@@ -98,8 +98,8 @@ life_tables <- list(
 ```{r 11-hazard-and-survival-plots}
 
 ggplot(life_tables) + 
-  geom_line(aes(x=time, y=risk_set_loss, group = group)) +
-  geom_line(aes(x=time, y=total_still_alive_this_period, group = group)) +
+  geom_line(aes(x=time, y=risk_set_loss, group = group, colour= group)) +
+  geom_line(aes(x=time, y=total_still_alive_this_period, group = group, colour= group)) +
   ylab("p")
 
 
@@ -110,6 +110,8 @@ Or we can skip all of that code cleaning using the *survival* package
 
 
 Incidentally, I'm pretty sure we can also replicate this by just fitting a basic varying intercepts binomial regression with *brms*
+
+
 
 ```{r 11-basic-plots-brms, message = FALSE}
 
