@@ -1,0 +1,72 @@
+# Describing Discrete-Time Event Occurrence Data
+
+##
+
+```{r load-packages}
+library(tidyverse)
+```
+
+```{r teachers-life-table}
+library(tidyverse)
+
+teachers_censorship <- read_csv("data/teachers.csv")
+teachers_outcomes <- read_csv("data/teachers_pp.csv") %>% rename("t" = period)
+
+teachers <- teachers_censorship %>% left_join(teachers_outcomes)
+
+teachers_life_table <- teachers %>% 
+  
+  distinct(t, id, .keep_all = TRUE) %>% 
+  
+  group_by(t) %>% 
+  
+  transmute(
+    t = t,
+    censored_this_period         = sum(censor),
+    left_this_period             = sum(event)
+  ) %>% 
+  
+  ungroup() %>% 
+  
+  distinct(t, .keep_all = TRUE) %>% 
+  
+  mutate(
+    cumulative_censored = cumsum(censored_this_period),
+    cumulative_events   = cumsum(left_this_period),
+    remaining_at_start_of_period = 3941 - cumulative_censored - cumulative_events
+  ) %>% 
+  
+  arrange(t)
+    
+
+```
+
+Kurz shows how we can just use a basic logistic regression with `period` as a varying intercept to replicate the hazard function values we got using `survival::survfit()`, IE the frequentist way. That's interesting. 
+
+He also shows how we can do a raw calculation of the survival function by just multiplying the parameter estimtaes for the hazards of each period, as given by the varying intercepts in the above logistic regression model, like so:
+
+```{r survival-from-hazard-brms, eval = FALSE}
+post <-
+  posterior_samples(fit10.6) %>% 
+  select(starts_with("b_")) %>% 
+  # transform the hazards from the log-odds metric to probabilities
+  mutate_all(inv_logit_scaled) %>% 
+  set_names(str_c("h", 1:12)) %>% 
+  # take the "complement" of each hazard
+  mutate_all(~1 - .) %>% 
+  # apply Equation 10.5
+  transmute(s0  = 1, 
+            s1  = h1, 
+            s2  = h1 * h2, 
+            s3  = h1 * h2 * h3, 
+            s4  = h1 * h2 * h3 * h4, 
+            s5  = h1 * h2 * h3 * h4 * h5, 
+            s6  = h1 * h2 * h3 * h4 * h5 * h6, 
+            s7  = h1 * h2 * h3 * h4 * h5 * h6 * h7, 
+            s8  = h1 * h2 * h3 * h4 * h5 * h6 * h7 * h8, 
+            s9  = h1 * h2 * h3 * h4 * h5 * h6 * h7 * h8 * h9, 
+            s10 = h1 * h2 * h3 * h4 * h5 * h6 * h7 * h8 * h9 * h10, 
+            s11 = h1 * h2 * h3 * h4 * h5 * h6 * h7 * h8 * h9 * h10 * h11, 
+            s12 = h1 * h2 * h3 * h4 * h5 * h6 * h7 * h8 * h9 * h10 * h11 * h12)
+```
+

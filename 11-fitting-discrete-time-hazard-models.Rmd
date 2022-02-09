@@ -1,0 +1,138 @@
+# Describing Discrete-Time Event Occurrence Data
+
+##
+
+```{r load-packages}
+library(tidyverse)
+```
+
+Our scientific question is whether being raised by your biological parents has an impact on how early you start doing intercourse. If your value of `pt` (parental transition) = 1, then that means you weren't just always consistently raised by your biological parents. How shall we interrogate this question?
+
+```{r 11-load-data, message = FALSE}
+library(tidyverse)
+library(brms)
+
+# Set some nice default settings for the MCMC
+options(brms.backend = "cmdstanr")
+options(mc.cores = parallel::detectCores())
+
+sex_dat_raw <- read_csv("data/firstsex.csv")
+
+```
+
+As is, the data only has one row for each person, with that row corresponding to the grade during which they did the deed. Let's modify the dataset so that we have the full longitudinal series
+
+```{r 11-data-cleaning}
+
+sex_dat_clean <- sex_dat_raw %>% 
+  
+  complete(nesting(id), time = seq(min(time), max(time), 1L)) %>% 
+  
+  group_by(id) %>% 
+  
+  fill(everything(), .direction = "up") %>% 
+  
+  filter(!is.na(censor)) %>% 
+    
+  mutate(
+    event = ifelse(time == max(time) & censor == 0, 1, 0),
+    censor = ifelse(time == max(time) & event == 0, 1, 0)
+  )
+  
+```
+
+Great. Now, to modelling.
+
+An easy first way of interogating our research question is to just fit separate Hazard and Survival functions for the two clusters in isolation, and see how they compare. To do this, I think we can just create two Life Tables, one for each cluster. Let's do it with a custom function.
+
+
+```{r 11-life-tables}
+ ##### THERES A PROBLEM WHERE THE RISK SET LOSS IS ALL MESSED UP, NAMELY ITS LAST ROW
+create_life_table <- function(d, time_var, event_var, censor_var){
+  
+  d <- d %>% 
+    
+    group_by(time) %>% 
+    
+    add_tally(name = "n_risk_set") %>% 
+    
+    mutate(
+      events_this_year   = sum(event),
+      censored_this_year = sum(censor),
+      risk_set_loss      = events_this_year / n_risk_set,
+    ) %>% 
+    
+    group_by(id) %>% 
+    
+    mutate(total_still_alive_this_period = n_risk_set / max(n_risk_set)) %>% 
+    
+    ungroup() %>% 
+    
+    select(
+      time, 
+      n_risk_set, 
+      events_this_year, 
+      censored_this_year, 
+      risk_set_loss, 
+      total_still_alive_this_period
+    ) %>%
+    
+    distinct(time, .keep_all = TRUE) 
+
+  return(d)
+  
+}
+
+life_tables <- list(
+  
+  life_table_pt     = sex_dat_clean %>% filter(pt == TRUE)  %>% create_life_table() %>% mutate(group = "pt"),
+  life_table_non_pt = sex_dat_clean %>% filter(pt == FALSE) %>% create_life_table() %>% mutate(group = "non_pt")
+    
+) %>% 
+  
+  bind_rows()
+   
+  
+```
+
+```{r 11-hazard-and-survival-plots}
+
+ggplot(life_tables) + 
+  geom_line(aes(x=time, y=risk_set_loss, group = group)) +
+  geom_line(aes(x=time, y=total_still_alive_this_period, group = group)) +
+  ylab("p")
+
+
+```
+
+
+Or we can skip all of that code cleaning using the *survival* package
+
+
+Incidentally, I'm pretty sure we can also replicate this by just fitting a basic varying intercepts binomial regression with *brms*
+
+```{r 11-basic-plots-brms, message = FALSE}
+
+sex_dat_raw_brm1 <- sex_dat_clean %>% 
+  
+  filter(pt == 0) %>% 
+  
+  group_by(time) %>% 
+  
+  add_tally(name = "risk_set_size") %>% 
+  
+  distinct(time, .keep_all = TRUE)
+  
+
+brmsfit.11.1 <- brm(data = sex_dat_raw_brm1, family = "binomial",
+                    event | trials(risk_set_size) ~ 0 + factor(time),
+                    prior(normal(0, 4), class = b),
+                    chains = 4, cores = 1, iter = 2000, warmup = 1000,
+                    seed = 10,
+                    file = )
+
+brmsfit.11.1 %>% broom.mixed::tidyMCMC() %>% mutate(estimate = inv_logit_scaled(estimate))
+
+```
+
+
